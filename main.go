@@ -8,9 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
-	"golang.org/x/sys/unix"
 	"gopkg.in/yaml.v3"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -114,10 +114,10 @@ func detectPlatform() map[string]string {
 			}
 		}
 	}
-	uname := unix.Utsname{}
-	if err := unix.Uname(&uname); err == nil {
-		info["architecture"] = strings.TrimRight(string(uname.Machine[:]), "\x00")
-	}
+
+	// Use runtime.GOARCH instead of unix.Uname for better cross-compilation support
+	info["architecture"] = runtime.GOARCH
+
 	return info
 }
 
