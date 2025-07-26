@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Test and Build
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'
+
+    - name: Verify dependencies
+      run: go mod verify
+
+    - name: Run tests
+      run: go test -v ./...
+
+    - name: Build for current platform
+      run: |
+        # Set version variables for development build
+        VERSION="dev-$(date +%Y%m%d-%H%M%S)"
+        COMMIT_SHA=${{ github.sha }}
+        BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')
+        
+        # Build with version information
+        go build \
+          -ldflags "-X github.com/a1ex-var1amov/flacon/version.Version=${VERSION} -X github.com/a1ex-var1amov/flacon/version.CommitSHA=${COMMIT_SHA} -X github.com/a1ex-var1amov/flacon/version.BuildTime=${BUILD_TIME}" \
+          -o flacon .
+        
+        # Test version command
+        ./flacon version
+
+    - name: Build for multiple platforms
+      run: |
+        # Set version variables for development build
+        VERSION="dev-$(date +%Y%m%d-%H%M%S)"
+        COMMIT_SHA=${{ github.sha }}
+        BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')
+        
+        # Create dist directory
+        mkdir -p dist
+        
+        # Build for Linux AMD64
+        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+          -ldflags "-X github.com/a1ex-var1amov/flacon/version.Version=${VERSION} -X github.com/a1ex-var1amov/flacon/version.CommitSHA=${COMMIT_SHA} -X github.com/a1ex-var1amov/flacon/version.BuildTime=${BUILD_TIME}" \
+          -o dist/flacon-linux-amd64 .
+        
+        # Build for macOS AMD64
+        GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build \
+          -ldflags "-X github.com/a1ex-var1amov/flacon/version.Version=${VERSION} -X github.com/a1ex-var1amov/flacon/version.CommitSHA=${COMMIT_SHA} -X github.com/a1ex-var1amov/flacon/version.BuildTime=${BUILD_TIME}" \
+          -o dist/flacon-darwin-amd64 .
+        
+        # Build for Windows AMD64
+        GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build \
+          -ldflags "-X github.com/a1ex-var1amov/flacon/version.Version=${VERSION} -X github.com/a1ex-var1amov/flacon/version.CommitSHA=${COMMIT_SHA} -X github.com/a1ex-var1amov/flacon/version.BuildTime=${BUILD_TIME}" \
+          -o dist/flacon-windows-amd64.exe .
+        
+        # List built binaries
+        echo "Built binaries:"
+        ls -la dist/
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: flacon-binaries
+        path: dist/
+        retention-days: 7 

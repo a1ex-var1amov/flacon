@@ -16,6 +16,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+
+	"github.com/a1ex-var1amov/flacon/version"
 )
 
 type ReconData struct {
@@ -36,6 +38,18 @@ type ReconData struct {
 }
 
 func main() {
+	// Check for version command
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "version", "-v", "--version":
+			fmt.Println(version.FullString())
+			return
+		case "help", "-h", "--help":
+			printUsage()
+			return
+		}
+	}
+
 	format := "yaml" // change to "json" if needed
 	var recon ReconData
 
@@ -55,6 +69,24 @@ func main() {
 	recon.CanCreatePod = checkPodCreationRights()
 
 	outputRecon(recon, format)
+}
+
+func printUsage() {
+	fmt.Printf(`%s
+
+Usage: flacon [command]
+
+Commands:
+  version, -v, --version    Show version information
+  help, -h, --help         Show this help message
+  (no args)                Run Kubernetes reconnaissance
+
+Examples:
+  flacon                   Run reconnaissance and output YAML
+  flacon version           Show version information
+  flacon --help            Show help message
+
+`, version.String())
 }
 
 // --- Helper Functions Below ---
