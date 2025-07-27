@@ -5,6 +5,10 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   build:
     name: Build and Upload
@@ -91,63 +95,68 @@ jobs:
         ls -la *.sha256
 
     - name: Create Release
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          dist/flacon-linux-amd64
-          dist/flacon-linux-amd64.sha256
-          dist/flacon-linux-arm64
-          dist/flacon-linux-arm64.sha256
-          dist/flacon-darwin-amd64
-          dist/flacon-darwin-amd64.sha256
-          dist/flacon-darwin-arm64
-          dist/flacon-darwin-arm64.sha256
-          dist/flacon-windows-amd64.exe
-          dist/flacon-windows-amd64.exe.sha256
-          dist/flacon-windows-arm64.exe
+      run: |
+        # Create release using GitHub CLI
+        gh release create ${{ steps.get_version.outputs.version }} \
+          --title "flacon ${{ steps.get_version.outputs.version }}" \
+          --notes "## flacon ${{ steps.get_version.outputs.version }}
+        
+        A simple Kubernetes reconnaissance tool for security assessments in containerized environments.
+        
+        ### Downloads
+        
+        **Linux:**
+        - [flacon-linux-amd64](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/flacon-linux-amd64) (AMD64)
+        - [flacon-linux-arm64](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/flacon-linux-arm64) (ARM64)
+        
+        **macOS:**
+        - [flacon-darwin-amd64](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/flacon-darwin-amd64) (AMD64)
+        - [flacon-darwin-arm64](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/flacon-darwin-arm64) (ARM64)
+        
+        **Windows:**
+        - [flacon-windows-amd64.exe](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/flacon-windows-amd64.exe) (AMD64)
+        - [flacon-windows-arm64.exe](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/flacon-windows-arm64.exe) (ARM64)
+        
+        ### Installation
+        
+        \`\`\`bash
+        # Download and make executable (Linux/macOS)
+        curl -L -o flacon https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/flacon-\$(uname -s | tr '[:upper:]' '[:lower:]')-\$(uname -m)
+        chmod +x flacon
+        
+        # Verify checksum
+        curl -L -o flacon.sha256 https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/flacon-\$(uname -s | tr '[:upper:]' '[:lower:]')-\$(uname -m).sha256
+        sha256sum -c flacon.sha256
+        \`\`\`
+        
+        ### Usage
+        
+        \`\`\`bash
+        # Run reconnaissance
+        ./flacon
+        
+        # Show version
+        ./flacon version
+        
+        # Show help
+        ./flacon --help
+        \`\`\`" \
+          --draft=false \
+          --prerelease=false
+
+    - name: Upload Release Assets
+      run: |
+        # Upload all binaries and checksums
+        gh release upload ${{ steps.get_version.outputs.version }} \
+          dist/flacon-linux-amd64 \
+          dist/flacon-linux-amd64.sha256 \
+          dist/flacon-linux-arm64 \
+          dist/flacon-linux-arm64.sha256 \
+          dist/flacon-darwin-amd64 \
+          dist/flacon-darwin-amd64.sha256 \
+          dist/flacon-darwin-arm64 \
+          dist/flacon-darwin-arm64.sha256 \
+          dist/flacon-windows-amd64.exe \
+          dist/flacon-windows-amd64.exe.sha256 \
+          dist/flacon-windows-arm64.exe \
           dist/flacon-windows-arm64.exe.sha256
-        body: |
-          ## flacon ${{ steps.get_version.outputs.version }}
-          
-          A simple Kubernetes reconnaissance tool for security assessments in containerized environments.
-          
-          ### Downloads
-          
-          **Linux:**
-          - [flacon-linux-amd64](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/flacon-linux-amd64) (AMD64)
-          - [flacon-linux-arm64](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/flacon-linux-arm64) (ARM64)
-          
-          **macOS:**
-          - [flacon-darwin-amd64](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/flacon-darwin-amd64) (AMD64)
-          - [flacon-darwin-arm64](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/flacon-darwin-arm64) (ARM64)
-          
-          **Windows:**
-          - [flacon-windows-amd64.exe](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/flacon-windows-amd64.exe) (AMD64)
-          - [flacon-windows-arm64.exe](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/flacon-windows-arm64.exe) (ARM64)
-          
-          ### Installation
-          
-          ```bash
-          # Download and make executable (Linux/macOS)
-          curl -L -o flacon https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/flacon-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)
-          chmod +x flacon
-          
-          # Verify checksum
-          curl -L -o flacon.sha256 https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/flacon-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m).sha256
-          sha256sum -c flacon.sha256
-          ```
-          
-          ### Usage
-          
-          ```bash
-          # Run reconnaissance
-          ./flacon
-          
-          # Show version
-          ./flacon version
-          
-          # Show help
-          ./flacon --help
-          ```
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

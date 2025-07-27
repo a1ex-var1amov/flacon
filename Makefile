@@ -75,6 +75,26 @@ version: build
 	@echo "Version information:"
 	./${BINARY_NAME} version
 
+# Create a new release
+.PHONY: release
+release:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "Error: VERSION is required. Example: make release VERSION=v1.0.0"; \
+		exit 1; \
+	fi
+	@echo "Creating release $(VERSION)..."
+	./scripts/release.sh -p $(VERSION)
+
+# Show what release would do
+.PHONY: release-dry
+release-dry:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "Error: VERSION is required. Example: make release-dry VERSION=v1.0.0"; \
+		exit 1; \
+	fi
+	@echo "Dry run for release $(VERSION)..."
+	./scripts/release.sh -d $(VERSION)
+
 # Show help
 .PHONY: help
 help:
@@ -89,6 +109,8 @@ help:
 	@echo "  test         - Run tests"
 	@echo "  run          - Build and run the application"
 	@echo "  version      - Show version information"
+	@echo "  release      - Create a new release (requires VERSION)"
+	@echo "  release-dry  - Show what release would do (requires VERSION)"
 	@echo "  help         - Show this help message"
 	@echo ""
 	@echo "Variables:"
@@ -97,4 +119,6 @@ help:
 	@echo "Examples:"
 	@echo "  make build VERSION=1.0.0"
 	@echo "  make build-all"
-	@echo "  make version" 
+	@echo "  make version"
+	@echo "  make release VERSION=v1.0.0"
+	@echo "  make release-dry VERSION=v1.0.0" 

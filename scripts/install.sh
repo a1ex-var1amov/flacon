@@ -73,7 +73,12 @@ detect_platform() {
 # Function to get latest version
 get_latest_version() {
     if command -v curl >/dev/null 2>&1; then
-        curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'
+        local latest_version=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+        if [[ -z "$latest_version" || "$latest_version" == "null" ]]; then
+            echo "no-releases"
+        else
+            echo "$latest_version"
+        fi
     else
         print_error "curl is required to get latest version"
         exit 1
@@ -128,6 +133,69 @@ install_flacon() {
     fi
 }
 
+# Function to install from source
+install_from_source() {
+    local install_dir=$1
+    
+    print_status "Installing flacon from source..."
+    
+    # Check if git is available
+    if ! command -v git >/dev/null 2>&1; then
+        print_error "git is required to install from source"
+        exit 1
+    fi
+    
+    # Check if go is available
+    if ! command -v go >/dev/null 2>&1; then
+        print_error "Go is required to install from source. Please install Go first."
+        exit 1
+    fi
+    
+    # Create temporary directory
+    local temp_dir=$(mktemp -d)
+    print_status "Cloning repository to temporary directory..."
+    
+    # Clone repository
+    if git clone "https://github.com/${REPO}.git" "$temp_dir/flacon"; then
+        cd "$temp_dir/flacon"
+        
+        # Build the application
+        print_status "Building flacon..."
+        if go build -o flacon .; then
+            # Install to target directory
+            if [[ ! -d "$install_dir" ]]; then
+                mkdir -p "$install_dir"
+            fi
+            
+            cp flacon "$install_dir/"
+            chmod +x "${install_dir}/flacon"
+            
+            print_success "Built and installed flacon from source"
+            
+            # Verify installation
+            if "${install_dir}/flacon" version >/dev/null 2>&1; then
+                print_success "Installation verified successfully"
+                echo ""
+                print_status "flacon has been installed to: ${install_dir}/flacon"
+                print_status "Version information:"
+                "${install_dir}/flacon" version
+            else
+                print_error "Installation verification failed"
+                exit 1
+            fi
+        else
+            print_error "Failed to build flacon"
+            exit 1
+        fi
+    else
+        print_error "Failed to clone repository"
+        exit 1
+    fi
+    
+    # Clean up
+    rm -rf "$temp_dir"
+}
+
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -163,8 +231,18 @@ if [[ "$VERSION" == "latest" ]]; then
     print_status "Latest version: $VERSION"
 fi
 
-# Install flacon
-install_flacon "$VERSION" "$INSTALL_DIR"
+# Check if releases are available
+if [[ "$VERSION" == "no-releases" ]]; then
+    print_warning "No releases found on GitHub. Installing from source instead."
+    install_from_source "$INSTALL_DIR"
+else
+    # Try to install from release
+    print_status "Attempting to install from release..."
+    if ! install_flacon "$VERSION" "$INSTALL_DIR" 2>/dev/null; then
+        print_warning "Failed to install from release. Installing from source instead."
+        install_from_source "$INSTALL_DIR"
+    fi
+fi
 
 print_success "Installation completed!"
 print_status "You can now run: flacon --help" 

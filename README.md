@@ -15,15 +15,17 @@ A simple Kubernetes reconnaissance tool for security assessments in containerize
 ### Quick Install
 
 ```bash
-# Install latest version
+# Install from source (recommended until first release)
 curl -sSL https://raw.githubusercontent.com/a1ex-var1amov/flacon/main/scripts/install.sh | bash
-
-# Install specific version
-curl -sSL https://raw.githubusercontent.com/a1ex-var1amov/flacon/main/scripts/install.sh | bash -s -- -v v1.0.0
 
 # Install to custom directory
 curl -sSL https://raw.githubusercontent.com/a1ex-var1amov/flacon/main/scripts/install.sh | bash -s -- -d ~/.local/bin
+
+# Install specific version (when releases are available)
+curl -sSL https://raw.githubusercontent.com/a1ex-var1amov/flacon/main/scripts/install.sh | bash -s -- -v v1.0.0
 ```
+
+> **Note**: The installation script will first try to download from releases, and if none are available, it will automatically build from source. This requires Go to be installed on your system.
 
 ### From Source
 
@@ -73,6 +75,33 @@ make version
 # Build to custom output directory
 ./scripts/build.sh -o ./binaries
 ```
+
+### Creating Releases
+
+The release process is fully automated through GitHub Actions:
+
+```bash
+# Create and push a new release (triggers automated build and release)
+make release VERSION=v1.0.0
+
+# Or use the release script directly
+./scripts/release.sh -p v1.0.0
+
+# Dry run to see what would happen
+make release-dry VERSION=v1.0.0
+
+# Create release with custom message
+./scripts/release.sh -m "Initial release with versioning" -p v1.0.0
+```
+
+**What happens automatically:**
+1. ✅ Tag is pushed to GitHub
+2. ✅ GitHub Actions builds for all platforms (Linux, macOS, Windows)
+3. ✅ Creates a GitHub release with all binaries
+4. ✅ Generates SHA256 checksums for verification
+5. ✅ Uploads everything to the release page
+
+**No manual steps required!** 🎉
 
 ## Usage
 
@@ -179,6 +208,7 @@ The project includes automated workflows:
   - Builds for all platforms (Linux, macOS, Windows)
   - Creates GitHub releases with binaries
   - Generates checksums for verification
+  - Automatically triggered by `make release` or `./scripts/release.sh`
 
 ### Adding Version Information to Output
 
