@@ -95,6 +95,8 @@ jobs:
         ls -la *.sha256
 
     - name: Create Release
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
         # Create release using GitHub CLI
         gh release create ${{ steps.get_version.outputs.version }} \
@@ -145,6 +147,8 @@ jobs:
           --prerelease=false
 
     - name: Upload Release Assets
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
         # Upload all binaries and checksums
         gh release upload ${{ steps.get_version.outputs.version }} \
