@@ -13,6 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -449,30 +450,64 @@ func listK8sSecretsAndConfigMaps() ([]string, []string) {
 }
 
 func checkPodCreationRights() bool {
+	fmt.Println("   🔍 Testing pod creation permissions...")
+
 	config, err := rest.InClusterConfig()
 	if err != nil {
+		fmt.Println("   ❌ Failed to get in-cluster config:", err)
 		return false
 	}
+
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
+		fmt.Println("   ❌ Failed to create clientset:", err)
 		return false
 	}
-	// Try to create a dummy pod (dry-run)
-	dummyPod := &metav1.PartialObjectMetadata{
+
+	// Get current namespace
+	namespace := os.Getenv("POD_NAMESPACE")
+	if namespace == "" {
+		// Try to read from service account namespace file
+		if nsBytes, err := ioutil.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+			namespace = strings.TrimSpace(string(nsBytes))
+		} else {
+			namespace = "default"
+		}
+	}
+	fmt.Printf("   📍 Testing in namespace: %s\n", namespace)
+
+	// Try to create a dummy pod (dry-run) using the proper API
+	dummyPod := &corev1.Pod{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Pod",
 			APIVersion: "v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "recon-dummy",
-			Namespace: "default",
+			Namespace: namespace,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:    "test",
+					Image:   "busybox:latest",
+					Command: []string{"sleep", "1"},
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyNever,
 		},
 	}
-	client := clientset.CoreV1().RESTClient()
-	result := client.Post().
-		AbsPath("/api/v1/namespaces/default/pods").
-		Param("dryRun", "All").
-		Body(dummyPod).
-		Do(context.TODO())
-	return result.Error() == nil
+
+	// Use the proper API call with dry-run
+	_, err = clientset.CoreV1().Pods(namespace).Create(context.TODO(), dummyPod, metav1.CreateOptions{
+		DryRun: []string{"All"},
+	})
+
+	if err != nil {
+		fmt.Printf("   ❌ Pod creation test failed: %v\n", err)
+		return false
+	}
+
+	fmt.Println("   ✅ Pod creation permissions confirmed")
+	return true
 }
