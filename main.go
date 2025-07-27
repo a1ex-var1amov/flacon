@@ -47,27 +47,122 @@ func main() {
 		case "help", "-h", "--help":
 			printUsage()
 			return
+		case "quick", "--quick":
+			// Quick scan mode - skip filesystem scanning
+			runQuickScan()
+			return
 		}
 	}
 
 	format := "yaml" // change to "json" if needed
 	var recon ReconData
 
+	fmt.Println("🔍 Starting flacon reconnaissance...")
+	fmt.Println("📋 Version:", version.String())
+
+	fmt.Println("🔍 Checking container environment...")
 	recon.IsContainer = isContainer()
+	if recon.IsContainer {
+		fmt.Println("✅ Running in container")
+	} else {
+		fmt.Println("ℹ️  Running on host system")
+	}
+
+	fmt.Println("🔍 Detecting platform...")
 	recon.PlatformInfo = detectPlatform()
 	recon.BaseImage = detectBaseImage()
+
+	fmt.Println("🔍 Checking privileges...")
 	recon.Privileged = checkPrivileged()
+	if recon.Privileged {
+		fmt.Println("⚠️  Running with privileged access")
+	} else {
+		fmt.Println("✅ Running with normal privileges")
+	}
+
+	fmt.Println("🔍 Checking for secrets in common locations...")
 	recon.Secrets = checkSecrets()
+
+	fmt.Println("🔍 Scanning for secrets in filesystem (this may take a while)...")
 	recon.SecretsFound = scanSecrets("/")
+
+	fmt.Println("🔍 Checking for misconfigurations...")
 	recon.Misconfigs = checkMisconfigs()
+
+	fmt.Println("🔍 Checking escape paths...")
 	recon.EscapePaths = checkEscapePaths()
+
+	fmt.Println("🔍 Checking writable paths...")
 	recon.WritablePaths = checkWritablePaths([]string{"/", "/etc", "/var", "/host", "/mnt", "/app", "/data"})
+
+	fmt.Println("🔍 Checking eBPF support...")
 	recon.EBPF = checkEBPFSupport()
+
+	fmt.Println("🔍 Checking clone syscall...")
 	recon.CloneSyscall = checkCloneSyscall()
 
+	fmt.Println("🔍 Checking Kubernetes access...")
 	recon.SecretsInCluster, recon.ConfigMapsInCluster = listK8sSecretsAndConfigMaps()
 	recon.CanCreatePod = checkPodCreationRights()
 
+	fmt.Println("📊 Generating reconnaissance report...")
+	outputRecon(recon, format)
+}
+
+func runQuickScan() {
+	fmt.Println("🔍 Starting flacon quick reconnaissance...")
+	fmt.Println("📋 Version:", version.String())
+	fmt.Println("⚡ Quick mode - skipping filesystem scanning")
+
+	format := "yaml"
+	var recon ReconData
+
+	fmt.Println("🔍 Checking container environment...")
+	recon.IsContainer = isContainer()
+	if recon.IsContainer {
+		fmt.Println("✅ Running in container")
+	} else {
+		fmt.Println("ℹ️  Running on host system")
+	}
+
+	fmt.Println("🔍 Detecting platform...")
+	recon.PlatformInfo = detectPlatform()
+	recon.BaseImage = detectBaseImage()
+
+	fmt.Println("🔍 Checking privileges...")
+	recon.Privileged = checkPrivileged()
+	if recon.Privileged {
+		fmt.Println("⚠️  Running with privileged access")
+	} else {
+		fmt.Println("✅ Running with normal privileges")
+	}
+
+	fmt.Println("🔍 Checking for secrets in common locations...")
+	recon.Secrets = checkSecrets()
+
+	fmt.Println("🔍 Skipping filesystem scan (quick mode)...")
+	recon.SecretsFound = []string{}
+
+	fmt.Println("🔍 Checking for misconfigurations...")
+	recon.Misconfigs = checkMisconfigs()
+
+	fmt.Println("🔍 Checking escape paths...")
+	recon.EscapePaths = checkEscapePaths()
+
+	fmt.Println("🔍 Checking writable paths...")
+	recon.WritablePaths = checkWritablePaths([]string{"/", "/etc", "/var", "/host", "/mnt", "/app", "/data"})
+
+	fmt.Println("🔍 Checking eBPF support...")
+	recon.EBPF = checkEBPFSupport()
+
+	fmt.Println("🔍 Checking clone syscall...")
+	recon.CloneSyscall = checkCloneSyscall()
+
+	fmt.Println("🔍 Checking Kubernetes access...")
+	recon.SecretsInCluster, recon.ConfigMapsInCluster = listK8sSecretsAndConfigMaps()
+	recon.CanCreatePod = checkPodCreationRights()
+
+	fmt.Println("📊 Generating reconnaissance report...")
 	outputRecon(recon, format)
 }
 
@@ -79,12 +174,17 @@ Usage: flacon [command]
 Commands:
   version, -v, --version    Show version information
   help, -h, --help         Show this help message
-  (no args)                Run Kubernetes reconnaissance
+  quick, --quick           Run quick reconnaissance (skip filesystem scan)
+  (no args)                Run full Kubernetes reconnaissance
 
 Examples:
-  flacon                   Run reconnaissance and output YAML
+  flacon                   Run full reconnaissance and output YAML
+  flacon quick             Run quick reconnaissance (faster)
   flacon version           Show version information
   flacon --help            Show help message
+
+Note: Full reconnaissance includes filesystem scanning which can be slow on large systems.
+Use 'quick' mode for faster results without filesystem scanning.
 
 `, version.String())
 }
@@ -171,20 +271,88 @@ func checkSecrets() []string {
 
 func scanSecrets(root string) []string {
 	var found []string
+	var fileCount int
+	var processedCount int
+
+	// Skip common directories that are usually not interesting
+	skipDirs := map[string]bool{
+		"/proc":      true,
+		"/sys":       true,
+		"/dev":       true,
+		"/run":       true,
+		"/tmp":       true,
+		"/var/tmp":   true,
+		"/var/cache": true,
+		"/var/log":   true,
+	}
+
+	// First, count files to show progress
 	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() || info.Size() > 5*1024*1024 {
+		if err != nil {
 			return nil
 		}
+
+		// Skip directories we don't want to scan
+		if info.IsDir() {
+			if skipDirs[path] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Only count files under 5MB
+		if info.Size() <= 5*1024*1024 {
+			fileCount++
+		}
+		return nil
+	})
+
+	if fileCount == 0 {
+		fmt.Println("   ℹ️  No files to scan")
+		return found
+	}
+
+	fmt.Printf("   📁 Found %d files to scan\n", fileCount)
+
+	// Now scan the files
+	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+
+		// Skip directories we don't want to scan
+		if info.IsDir() {
+			if skipDirs[path] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Skip files larger than 5MB
+		if info.Size() > 5*1024*1024 {
+			return nil
+		}
+
+		processedCount++
+		if processedCount%1000 == 0 {
+			fmt.Printf("   📊 Progress: %d/%d files scanned (%.1f%%)\n", processedCount, fileCount, float64(processedCount)/float64(fileCount)*100)
+		}
+
 		content, err := ioutil.ReadFile(path)
 		if err != nil {
 			return nil
 		}
+
 		data := string(content)
 		if strings.Contains(data, "Bearer ") || strings.Contains(data, "eyJ") || strings.Contains(data, "AKIA") || strings.Contains(data, "-----BEGIN") || strings.Contains(data, "access_token") || strings.Contains(data, "secret") {
 			found = append(found, path)
+			fmt.Printf("   🔐 Found potential secret in: %s\n", path)
 		}
+
 		return nil
 	})
+
+	fmt.Printf("   ✅ Scan complete: %d files processed, %d potential secrets found\n", processedCount, len(found))
 	return found
 }
 
